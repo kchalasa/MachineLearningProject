@@ -1,0 +1,186 @@
+## Weight Lifting Exercise - Predict quality of the exercise using Machine Learning Algorithm in R
+
+### Introduction
+
+Devices like Fitbit, Jawbone Up and several other similar products have gained popularity among the health enthusiasts. They use the  data from the accelerometer in these products to study their own behaviour and make adjustments accordingly with the intent of improving their personnal health. 
+
+In this paper our goal is to analyze the data from a weight lifting exercise program, so we can determine "how (well)" an exercise activity was performed. These accelerometers were placed on the belt, forearm, arm, and dumbell of the study participants. We intend to build a predictive function using R, that can be applied to a test data set to determine the the quality of their exercise. 
+
+The [Weight Lifting Exercise (WLE) dataset](http://groupware.les.inf.puc-rio.br/work.jsf?p1=11201) was obtained from [HAR](http://groupware.les.inf.puc-rio.br/har) website. In the WLE study six young health participants were asked to perform one set of 10 repetitions of the Unilateral Dumbbell Biceps Curl in five different fashions: exactly according to the specification (Class A), throwing the elbows to the front (Class B), lifting the dumbbell only halfway (Class C), lowering the dumbbell only halfway (Class D) and throwing the hips to the front (Class E). We will use this data set to build a predictive function, that will then be applied on the testing data set, to predict the fashion (classe) in which these excercise were performed.
+
+
+### Load Data
+
+Get the training and the testing data set for this analysis.
+
+```{r echo=TRUE}
+		#Download the practical machine learning training data and load into "training" data frame.
+		download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-training.csv",destfile="pml-training.csv")
+		training<-read.csv("pml-training.csv",header=TRUE,na.strings=c("", "NA"))
+		dim(training)
+		
+		#Download the practical machine learning testing data and load into "testing" data frame.	
+		download.file("http://d396qusza40orc.cloudfront.net/predmachlearn/pml-testing.csv",destfile="pml-testing.csv")
+		testing<-read.csv("pml-testing.csv",header=TRUE,na.strings=c("", "NA"))
+		dim(testing)
+```
+
+### Exploratory Data Analysis - Data Processing and Feature Selection
+
+We applied several data cleansing techniques to tidy up our training data for this analysis. We eliminated some irrelevant variables; removed variables containing missing values and removed the variables highly correlated with others. 
+```{r echo=TRUE}
+		## Remove the variables which are either BLANK or have NA's
+  		InProcessDataSet<-training[,colSums(is.na(training))==0]
+  		dim(InProcessDataSet)
+
+		##Remove any unrelevant variables 
+  		names(InProcessDataSet[,c(1,2,3,4,5,6,7)])
+  		InProcessDataSet<-InProcessDataSet[,-c(1,2,3,4,5,6,7)]
+  		dim(InProcessDataSet)
+
+		## Remove independent variables that are Highly Correlated with others.
+  		correlationMatrix<-abs(cor(InProcessDataSet[,-53]))
+  		diag(correlationMatrix)<-0
+  		removeCols<-rownames(which(correlationMatrix>0.85,arr.ind=T))
+  		InProcessDataSet<-InProcessDataSet[,-which(names(InProcessDataSet) %in% removeCols)]
+  		dim(InProcessDataSet)
+```
+
+We then split this processed tidy training dataset into  training (processedTraining -70%) and validation (processedValidation -30%). We will keep processedValidation dataset aside for testing or cross validation of our chosen prediction function. Final chosen model will then be applied on testing set for this project. 
+
+```{r echo=TRUE,message=FALSE}
+		## Split the preprocessed dataset into training and validation for cross validation.
+
+		library(caret)
+    # Partition Index
+		inTraining <- createDataPartition(y=InProcessDataSet$classe, p=0.7, list=FALSE)
+		
+		# 70% training data set - will be used to build our prediction function
+		processedTraining <- InProcessDataSet[inTraining,]
+		dim(processedTraining)
+		
+		# 30% validation data set - will be used for preliminary testing (or validation) of our prediction function
+		processedValidation <- InProcessDataSet[-inTraining,]
+		dim(processedValidation)
+```
+
+**Visualize the training data**
+
+We now explore our processed training dataset to see patterns in the data. We used singular value decomposition, to reduce the
+features and visualize this data. Clearly from the figure below, we can see the classification of various types of activities.
+
+```{r echo=TRUE}
+	#str(processedTraining)
+	numericClasse <- as.numeric(as.factor(InProcessDataSet$classe))
+	svd2 <- svd(scale(InProcessDataSet[sapply(InProcessDataSet, is.numeric)]))
+	plot(svd2$u[,1],col=numericClasse,pch=19)
+	legend(18000,0.001,legend=unique(InProcessDataSet$classe),col=unique(numericClasse),pch=19)
+```
+
+### Machine Leaning
+
+##### Decision Tree Learning
+
+We choose to build our first predictive function using decision tree learning as they are very easy to understand and very commonly used method in data mining. 
+
+```{r echo=TRUE,message=FALSE}
+	set.seed(34527)  ## setting the seed so results can be reproduced
+	library(tree)
+	treeFit <- tree(classe ~., data=processedTraining )
+	summary(treeFit)
+	#predict.orig.tr<-predict(treeFit, processedValidation)
+```
+Misclassification error rate is pretty high, so lets try to cross validate our model and see if we can tune it. 
+
+```{r echo=TRUE}
+	## Cross Validation
+	XValid = cv.tree(treeFit, FUN=prune.tree)
+	plot(XValid)
+```
+#
+Clearly deviance increases as the number of nodes decreases. So this tree cannot be  predict any better by pruning. But we will prune the tree to 15 nodes, to see the impact of pruning on the model.
+```{r echo=TRUE}
+	pruneTree <- prune.tree(treeFit,best=15)
+	summary(pruneTree)
+```
+
+As you can see missclassification error rate and residual mean deviance both increase slightly, so pruning really did not help here.
+So lets try using Random Forest algorithm next for building our model.
+
+#### Random Forest
+
+We picked [Random Forest](https://www.stat.berkeley.edu/~breiman/RandomForests/cc_home.htm#overview) to build our predictive function as it is one of the top performing prediction algorithm and known widely for its accuracy. It can handle large databases and large number of variables. The random forest out-of-bag(oob) error is an estimate of the generalization error. The oob error estimate is given by the misclassification errors averaged over each bootstrap sample that was not used in construction of the tree. Random forests algorithm also gives a pretty good estimate of the variable importance. 
+
+```{r echo=TRUE,message=FALSE}
+		set.seed(34527)  ## setting the seed so results can be reproduced
+		library(randomForest)
+		rffit <- randomForest(classe ~ ., processedTraining ,  ntree=50,importance=TRUE) 
+		rffit
+```
+The out-of-bag error estimate seems promising. The confusion matrix indicates that the model is performing fairly accurately on the training data set. Lets try to increase the number of trees in random forest and try to reduce our estimate of the out of the bag (OOB) error rate further down.
+
+```{r echo=TRUE}
+		set.seed(34527)  ## setting the seed so results can be reproduced
+		library(randomForest)
+		rf.fit <- randomForest(classe ~ ., processedTraining ,  ntree=1500,importance=TRUE) 
+		rf.fit
+```
+As can be seen above our estimated OOB error rate has reduced as we increased the number of trees in revised random forest model.
+Also our confusion matrix looks better than the previous version of this model. Lets review our variables of importance in the revised model (rf.fit).
+```{r echo=TRUE}
+		varImpPlot(rf.fit)
+		#rf.fit$importance
+```
+**Random Forest Cross-Validation for feature selection (rfcv)**
+We applied random forest cross validation on the features we selected. .
+```{r echo=TRUE}
+    # Random Forest Cross Validation (caution:very slow, may take long time)
+		crossValidationRF<-rfcv(processedTraining[,-41],processedTraining$classe, cv.fold=6)
+		with(crossValidationRF, plot(n.var, error.cv,type="l"))
+```	
+
+We observed that as the number of variables increase from one to about ten variable, the cross-validation error drops drastically, and after that point the cross validation error kind of stabilizes to a low value. Since we definitely have more than 10 features, we are confident that we included all the important features in our training data set used in building our model. So we can confidently consider random forest model fit (rf.fit) for our "final prediction function" for this paper.
+
+We will use this final model selected (rf.fit), to validate "how (well)" the exercise is done in the our validation data set (processedValidation). Even though this cross validation step is not necessary for random forest models, we chose to apply it as we set aside a data set for this purpose.
+
+```{r echo=TRUE}
+    cvPredict=predict(rf.fit,processedValidation,type="response")
+    # Confusion Matrix
+    cvMatrix<-confusionMatrix(processedValidation$classe,cvPredict)
+		cvMatrixTable<-cvMatrix$table
+    cvMatrixTable
+		
+```
+
+Clearly the confusion matrix on the validation data set looks good, our prediction model seems to be predicting accurately. 
+Let's calculate the error rate for our validation set prediction.
+
+```{r echo=TRUE}
+    # Accuracy
+		cvMatrix$overall[1]
+		# Error Rate 
+		err.rate<-sum(cvMatrixTable[row(cvMatrixTable)!=col(cvMatrixTable)])/sum(cvMatrixTable)
+    err.rate
+```
+
+Results are excelled with accuracy rate of `r cvMatrix$overall[1]` and error rate of `r err.rate`. Clearly our cross validation error rate is less than the estimated out of the bag (OOB) error rate for our model. So, we choose this random forest model (rf.fit) with number of trees set to 1500 (ntree=1500) as our "Final Model".
+
+### Final Model
+
+We will use this random forest prediction function on the practical machine learning "testing" data set for this project.
+
+```{r echo=TRUE}
+		pml.testPredict<-predict(rf.fit, testing)
+		# Function to generate text files for project submission.
+		pml_write_files = function(x){
+			  n = length(x)
+			  for(i in 1:n){
+				filename = paste0("problem_id_",i,".txt")
+				write.table(x[i],file=filename,quote=FALSE,row.names=FALSE,col.names=FALSE)
+			  }
+			}
+		pml_write_files(as.character(pml.testPredict))
+```
+
+**Results**
+Our prediction function predicted testing data set given for this project with 100% accuracy.
